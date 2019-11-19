@@ -9,7 +9,7 @@ async function fetchWithCache(url) {
 
     const response = await fetch(url);
     if (!response.ok)
-        return response;
+        throw new Error(response.statusText);
 
     const data = await response.json();
     await KV_DUB_REGISTRY.put(url, JSON.stringify(data));
