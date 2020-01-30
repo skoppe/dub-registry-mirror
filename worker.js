@@ -79,14 +79,13 @@ async function fetchRawFromUpstreamOrCache(url, expires = 1000 * 60 * 5) {
 async function handleRequest(request) {
   try {
     const url = new URL(request.url);
-    if (request.url.indexOf("/api/") !== -1) {
+    const parts = url.pathname.split('/');
+    if ((parts[1] === 'packages' && parts.length == 3) || (parts[1] === 'api')) {
       const upstreamUrl = upstreamBaseUrl + url.pathname + url.search;
       const data = await fetchRawFromUpstreamOrCache(upstreamUrl);
       return new Response(data, {status: 200, headers:{"content-type":"application/json"}});
     }
-
-    const parts = url.pathname.split('/');
-    if (parts[1] === 'packages') {
+    if (parts[1] === 'packages' && parts.length == 4) {
      const packageName = parts[2];
      const version = parts[3].slice(0,-4);
 
