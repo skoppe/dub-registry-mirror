@@ -65,9 +65,8 @@ async function fetchRawFromUpstreamOrCache(url, expires = 1000 * 60 * 5) {
         return upstreamRawResult;
       }
     } catch (ex) {
-      console.log(ex);
         if (cacheResult === null)
-          throw new Error("upstream timeout");
+          throw ex;
         await storeKeyValue(url, cacheResult.content); // restore to update timestamp
         return cacheResult.content;
     }
@@ -107,7 +106,11 @@ async function handleRequest(request) {
       }
     }
   } catch (e) {
-    return new Response("Error: " + e.message, {status: 400})
+    if (e.message == "Not Found")
+      return new Response("Not Found", {status: 404})
+    if (e.message == 'Request timed out')
+      return new Response("Upstream timeout", {status: 504})
+    return new Response("Error: " + e.message, {status: 500})
   }
   return new Response("Unknown request", {status: 500})
 }
