@@ -2,75 +2,7 @@ addEventListener('fetch', event => {
   event.respondWith(handleRequest(event.request))
 })
 
-const upstreamBaseUrl = "https://code.dlang.org";
-const version = 1;
-const keyPrefix = "ng2-";
-//const upstreamBaseUrl = "http://31.15.67.41";
-
-async function storeKeyValue(key, content) {
-  const data = {time: Date.now(), version: version, content: content}
-  await KV_DUB_REGISTRY.put(keyPrefix + key, JSON.stringify(data));
-}
-
-async function getKeyValue(key) {
-  const cacheResult = await KV_DUB_REGISTRY.get(keyPrefix + key);
-  if (cacheResult === null)
-    return null;
-  return JSON.parse(cacheResult);
-}
-
-async function fetchWithTimeout(url, timeout = 5000) {
-  let didTimeOut = false;
-  return new Promise(function(resolve, reject) {
-      const timer = setTimeout(function() {
-          didTimeOut = true;
-          reject(new Error('Request timed out'));
-      }, timeout);
-      
-      fetch(url)
-        .then(function(response) {
-            // Clear the timeout as cleanup
-            clearTimeout(timer);
-            if(!didTimeOut) {
-                resolve(response);
-            }
-        })
-        .catch(function(err) {
-            // Rejection already happened with setTimeout
-            if(didTimeOut) return;
-            clearTimeout(timer);
-            // Reject with error
-            reject(err);
-        });
-  })
-}
-
-async function fetchRawFromUpstreamOrCache(url, expires = 1000 * 60 * 5) {
-    const cacheResult = await getKeyValue(url)
-    if (cacheResult !== null && cacheResult.time + expires > Date.now())
-      return cacheResult.content;
-    try {
-      const response = await fetchWithTimeout(url);
-
-      if (!response.ok) {
-        if (cacheResult === null)
-          throw new Error(response.statusText);
-        await storeKeyValue(url, cacheResult.content); // restore to update timestamp
-        return cacheResult.content;
-      } else {
-        const upstreamRawResult = await response.text();
-        try {
-          await storeKeyValue(url, upstreamRawResult);
-        } catch (e) {}
-        return upstreamRawResult;
-      }
-    } catch (ex) {
-        if (cacheResult === null)
-          throw ex;
-        await storeKeyValue(url, cacheResult.content); // restore to update timestamp
-        return cacheResult.content;
-    }
-}
+const packagePrefix = "package-";
 
 /**
  * Fetch and log a request
@@ -80,36 +12,80 @@ async function handleRequest(request) {
   try {
     const url = new URL(request.url);
     const parts = url.pathname.split('/');
-    if ((parts[1] === 'packages' && parts.length == 3) || (parts[1] === 'api')) {
-      const upstreamUrl = upstreamBaseUrl + url.pathname + url.search;
-      const data = await fetchRawFromUpstreamOrCache(upstreamUrl);
-      return new Response(data, {status: 200, headers:{"content-type":"application/json"}});
+    if (url.pathname === "/api/packages/search") {
+      const data = await KV_DUB_PACKAGES.get(packagePrefix + url.searchParams.get("q"));
+      if (data === null)
+        return new Response("[]",{headers:{"content-type":"application/json"}})
+      const package = JSON.parse(data);
+      const result = [{name: package.name, description: package.description, version: package.versions.slice(-1)[0].version}]
+      return new Response(JSON.stringify(result),{headers:{"content-type":"application/json"}})
     }
-    if (parts[1] === 'packages' && parts.length == 4) {
-     const packageName = parts[2];
-     const version = parts[3].slice(0,-4);
-
-      const infoUrl = `${upstreamBaseUrl}/api/packages/${packageName}/info`
-      let package = JSON.parse(await fetchRawFromUpstreamOrCache(infoUrl))
-
-      const repo = package.repository;
-      const repoType = repo.kind;
-
-      switch (repoType) {
-        case 'github':
-          return Response.redirect(`https://github.com/${repo.owner}/${repo.project}/archive/v${version}.zip`, 301)
-        case 'gitlab':
-          return Response.redirect(`https://gitlab.com/${repo.owner}/${repo.project}/-/archive/v${version}/${repo.project}-v${version}.zip`, 301)
-        default:
-          return new Response(`Repository ${repoType} is not supported`,{status: 400})
-      }
+    if (url.pathname === "/api/packages/infos") {
+      const rootPackage = JSON.parse(url.searchParams.get("packages"))[0];
+      let result = {};
+      let visited = {};
+      
+        function handleResult(package, data) {
+          if (data === null) {
+            result[package] = null;
+          } else {
+            result[package] = JSON.parse(data);
+            return Promise.all(result[package].versions.map(addDependencies))
+          }
+          return Promise.resolve()
+        }
+        function scheduleWork(name) {
+          let package = name.split(":")
+          let basePackage = package[0];
+          let subPackage = package[1];
+          if (result[basePackage] !== undefined) {
+            if (subPackage) {
+              result[basePackage].versions.forEach(version => {
+                if (version.subPackages) {
+                  const matchingSubPackage = version.subPackages.find(p => p.name == subPackage);
+                  if (matchingSubPackage)
+                    return Promise.all(addDependencies(matchingSubPackage));
+                }
+              })
+            }
+            return Promise.resolve();
+          }
+          return KV_DUB_PACKAGES.get(packagePrefix + basePackage).then(data => handleResult(basePackage, data))
+        }
+        function addDependencies(version) {
+          let work = [];
+          function planWork(deps) {
+            Object.keys(deps).forEach(dep => {
+              let basePackage = dep.split(":")[0]
+              if (visited[basePackage] === undefined) {
+                visited[basePackage] = true;
+                work.push(scheduleWork(dep))
+              }
+            })
+          }
+          if (version.dependencies) {
+            planWork(version.dependencies)
+          }
+          if (version.configurations) {
+            version.configurations.forEach(config => {
+              if (config.dependencies) {
+                planWork(config.dependencies);
+              }
+            })
+          }
+          return Promise.all(work);
+        }
+        await scheduleWork(rootPackage)
+        return new Response(JSON.stringify(result),{headers:{"content-type":"application/json"}})
     }
+   
   } catch (e) {
     if (e.message == "Not Found")
       return new Response("Not Found", {status: 404})
     if (e.message == 'Request timed out')
       return new Response("Upstream timeout", {status: 504})
-    return new Response("Error: " + e.message, {status: 500})
+      console.log(e);
+    return new Response("Error: " + e, {status: 500})
   }
   return new Response("Unknown request", {status: 500})
 }
