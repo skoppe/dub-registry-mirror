@@ -1,9 +1,11 @@
-# Dub cloudflare worker registry mirror
+# Dub registry mirror
 
-This cloudflare worker simply redirects, avoiding the parts of the dub registry that suffer from downtime.
+This dub registry mirror is implemented as a cloudflare worker.
 
-It is a quick bandaid solution, but one with no downtime :)
+The dub packages are stored in the cloudflare KV-store.
+
+The KV-store store is updated every 15 minutes by github.com/skoppe/dub-packages-indexer
 
 ## Use it
 
-`dub build --registry=https://dub.bytecraft.nl`
+`dub --registry="https://dub.bytecraft.nl"`
