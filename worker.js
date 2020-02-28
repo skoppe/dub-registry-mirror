@@ -20,6 +20,27 @@ async function handleRequest(request) {
       const result = [{name: package.name, description: package.description, version: package.versions.slice(-1)[0].version}]
       return new Response(JSON.stringify(result),{headers:{"content-type":"application/json"}})
     }
+    if (url.pathname.indexOf("/packages/") === 0) {
+      const parts = url.pathname.split("/");
+      if (parts.length == 4) {
+        const packageName = parts[2];
+        const version = parts[3].slice(0,-4);
+
+        let package = JSON.parse(await KV_DUB_PACKAGES.get(packagePrefix + packageName))
+
+        const repo = package.repository;
+        const repoType = repo.kind;
+
+        switch (repoType) {
+          case 'github':
+            return Response.redirect(`https://github.com/${repo.owner}/${repo.project}/archive/v${version}.zip`, 301)
+          case 'gitlab':
+            return Response.redirect(`https://gitlab.com/${repo.owner}/${repo.project}/-/archive/v${version}/${repo.project}-v${version}.zip`, 301)
+          default:
+            return new Response(`Repository ${repoType} is not supported`,{status: 400})
+        }
+      }
+    }
     if (url.pathname === "/api/packages/infos") {
       const rootPackage = JSON.parse(url.searchParams.get("packages"))[0];
       let result = {};
