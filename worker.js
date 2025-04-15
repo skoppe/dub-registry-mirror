@@ -19,8 +19,7 @@ async function handleRequest(request) {
       const package = JSON.parse(data);
       const result = [{name: package.name, description: package.description, version: package.versions.slice(-1)[0].version}]
       return new Response(JSON.stringify(result),{headers:{"content-type":"application/json"}})
-    }
-    if (url.pathname.indexOf("/packages/") === 0) {
+    } else if (url.pathname.indexOf("/packages/") === 0) {
       const parts = url.pathname.split("/");
       if (parts.length == 4) {
         const packageName = parts[2];
@@ -40,8 +39,7 @@ async function handleRequest(request) {
             return new Response(`Repository ${repoType} is not supported`,{status: 400})
         }
       }
-    }
-    if (url.pathname === "/api/packages/infos") {
+    } else if (url.pathname === "/api/packages/infos") {
       const rootPackage = JSON.parse(url.searchParams.get("packages"))[0];
       let result = {};
       let visited = {};
@@ -98,8 +96,9 @@ async function handleRequest(request) {
         }
         await scheduleWork(rootPackage)
         return new Response(JSON.stringify(result),{headers:{"content-type":"application/json"}})
+    } else {
+      return new Response("You have reached an API only code.dlang.org mirror for D packages.",{headers:{"content-type":"text/html"}})
     }
-   
   } catch (e) {
     if (e.message == "Not Found")
       return new Response("Not Found", {status: 404})
